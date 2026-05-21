@@ -16,7 +16,12 @@ final class IShowSpeedApp: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let settings = AppSettings()
         let monitor = NetworkSpeedMonitor(provider: NetworkStatsProvider())
-        statusBarController = StatusBarController(monitor: monitor, settings: settings)
+        let dormTrafficService = DormTrafficService(fetcher: DormTrafficClient())
+        statusBarController = StatusBarController(
+            monitor: monitor,
+            dormTrafficService: dormTrafficService,
+            settings: settings
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

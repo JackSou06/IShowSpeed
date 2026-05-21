@@ -5,17 +5,32 @@ import Foundation
 final class StatusBarController: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor: NetworkSpeedMonitor
+    private let dormTrafficService: DormTrafficService
     private let settings: AppSettings
     private let formatter = SpeedFormatter()
     private let statusFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
 
     private var latestSpeed = NetworkSpeed.zero
+    private var latestDormTraffic: DailyTrafficUsage?
+    private var isDormTrafficRefreshInProgress = false
     private let downloadItem = NSMenuItem(title: "Download: 0.0 B/s", action: nil, keyEquivalent: "")
     private let uploadItem = NSMenuItem(title: "Upload: 0.0 B/s", action: nil, keyEquivalent: "")
+    private let dormTrafficStatusItem = NSMenuItem(title: "Dorm Traffic: not loaded", action: nil, keyEquivalent: "")
+    private let dormTrafficTotalItem = NSMenuItem(title: "Today Total: --", action: nil, keyEquivalent: "")
+    private let dormTrafficDownloadItem = NSMenuItem(title: "Today Download: --", action: nil, keyEquivalent: "")
+    private let dormTrafficUploadItem = NSMenuItem(title: "Today Upload: --", action: nil, keyEquivalent: "")
+    private let dormTrafficUpdatedItem = NSMenuItem(title: "Updated: --", action: nil, keyEquivalent: "")
+    private let dormTrafficRefreshItem = NSMenuItem(title: "Refresh Dorm Traffic", action: #selector(refreshDormTrafficManually), keyEquivalent: "r")
     private let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+    private lazy var dormTrafficDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 
-    init(monitor: NetworkSpeedMonitor, settings: AppSettings) {
+    init(monitor: NetworkSpeedMonitor, dormTrafficService: DormTrafficService, settings: AppSettings) {
         self.monitor = monitor
+        self.dormTrafficService = dormTrafficService
         self.settings = settings
         super.init()
         configureStatusItem()
@@ -66,11 +81,27 @@ final class StatusBarController: NSObject {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
 
         downloadItem.isEnabled = false
         uploadItem.isEnabled = false
         menu.addItem(downloadItem)
         menu.addItem(uploadItem)
+        menu.addItem(.separator())
+
+        dormTrafficStatusItem.isEnabled = false
+        dormTrafficTotalItem.isEnabled = false
+        dormTrafficDownloadItem.isEnabled = false
+        dormTrafficUploadItem.isEnabled = false
+        dormTrafficUpdatedItem.isEnabled = false
+        dormTrafficRefreshItem.target = self
+        dormTrafficRefreshItem.isEnabled = !isDormTrafficRefreshInProgress
+        menu.addItem(dormTrafficStatusItem)
+        menu.addItem(dormTrafficTotalItem)
+        menu.addItem(dormTrafficDownloadItem)
+        menu.addItem(dormTrafficUploadItem)
+        menu.addItem(dormTrafficUpdatedItem)
+        menu.addItem(dormTrafficRefreshItem)
         menu.addItem(.separator())
 
         let intervalMenu = NSMenu()
@@ -110,6 +141,50 @@ final class StatusBarController: NSObject {
 
         statusItem.menu = menu
         updateDisplayedSpeed()
+        updateDormTrafficItems()
+    }
+
+    private func updateDormTrafficItems(status: String? = nil) {
+        dormTrafficStatusItem.title = status ?? "Dorm Traffic: ready"
+        dormTrafficRefreshItem.isEnabled = !isDormTrafficRefreshInProgress
+
+        guard let latestDormTraffic else {
+            dormTrafficTotalItem.title = "Today Total: --"
+            dormTrafficDownloadItem.title = "Today Download: --"
+            dormTrafficUploadItem.title = "Today Upload: --"
+            dormTrafficUpdatedItem.title = "Updated: --"
+            return
+        }
+
+        dormTrafficTotalItem.title = "Today Total: \(latestDormTraffic.total)"
+        dormTrafficDownloadItem.title = "Today Download: \(latestDormTraffic.download)"
+        dormTrafficUploadItem.title = "Today Upload: \(latestDormTraffic.upload)"
+        dormTrafficUpdatedItem.title = "Updated: \(dormTrafficDateFormatter.string(from: latestDormTraffic.fetchedAt))"
+    }
+
+    private func refreshDormTraffic(forceRefresh: Bool) {
+        guard !isDormTrafficRefreshInProgress else {
+            return
+        }
+
+        isDormTrafficRefreshInProgress = true
+        updateDormTrafficItems(status: latestDormTraffic == nil ? "Dorm Traffic: loading..." : "Dorm Traffic: refreshing...")
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                let usage = try await dormTrafficService.usage(forceRefresh: forceRefresh)
+                latestDormTraffic = usage
+                isDormTrafficRefreshInProgress = false
+                updateDormTrafficItems()
+            } catch {
+                isDormTrafficRefreshInProgress = false
+                updateDormTrafficItems(status: "Dorm Traffic: unavailable")
+            }
+        }
     }
 
     @objc private func selectRefreshInterval(_ sender: NSMenuItem) {
@@ -131,6 +206,10 @@ final class StatusBarController: NSObject {
 
         settings.unitMode = mode
         rebuildMenu()
+    }
+
+    @objc private func refreshDormTrafficManually() {
+        refreshDormTraffic(forceRefresh: true)
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -158,5 +237,11 @@ final class StatusBarController: NSObject {
     @objc private func quit() {
         monitor.stop()
         NSApplication.shared.terminate(nil)
+    }
+}
+
+extension StatusBarController: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshDormTraffic(forceRefresh: false)
     }
 }
