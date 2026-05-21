@@ -8,19 +8,22 @@ final class StatusBarController: NSObject {
     private let dormTrafficService: DormTrafficService
     private let settings: AppSettings
     private let formatter = SpeedFormatter()
+    private let titleFormatter = StatusTitleFormatter()
     private let statusFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+    private let singleLineStatusFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
     private var latestSpeed = NetworkSpeed.zero
     private var latestDormTraffic: DailyTrafficUsage?
+    private var isDormTrafficUnavailable = false
     private var isDormTrafficRefreshInProgress = false
+    private var dormAutoRefreshTimer: Timer?
     private let downloadItem = NSMenuItem(title: "Download: 0.0 B/s", action: nil, keyEquivalent: "")
     private let uploadItem = NSMenuItem(title: "Upload: 0.0 B/s", action: nil, keyEquivalent: "")
     private let dormTrafficStatusItem = NSMenuItem(title: "Dorm Traffic: not loaded", action: nil, keyEquivalent: "")
     private let dormTrafficTotalItem = NSMenuItem(title: "Today Total: --", action: nil, keyEquivalent: "")
-    private let dormTrafficDownloadItem = NSMenuItem(title: "Today Download: --", action: nil, keyEquivalent: "")
-    private let dormTrafficUploadItem = NSMenuItem(title: "Today Upload: --", action: nil, keyEquivalent: "")
     private let dormTrafficUpdatedItem = NSMenuItem(title: "Updated: --", action: nil, keyEquivalent: "")
     private let dormTrafficRefreshItem = NSMenuItem(title: "Refresh Dorm Traffic", action: #selector(refreshDormTrafficManually), keyEquivalent: "r")
+    private let dormTrafficOpenPageItem = NSMenuItem(title: "Open Dorm Traffic Page", action: #selector(openDormTrafficPage), keyEquivalent: "")
     private let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private lazy var dormTrafficDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -37,12 +40,13 @@ final class StatusBarController: NSObject {
         configureMonitor()
         rebuildMenu()
         monitor.start(interval: settings.refreshInterval.rawValue)
+        configureDormAutoRefreshTimer()
     }
 
     private func configureStatusItem() {
         statusItem.button?.alignment = .center
         statusItem.button?.lineBreakMode = .byClipping
-        setStatusTitle(download: "0.0 B/s", upload: "0.0 B/s")
+        updateStatusTitle()
         statusItem.menu = NSMenu()
     }
 
@@ -56,25 +60,38 @@ final class StatusBarController: NSObject {
     private func updateDisplayedSpeed() {
         let download = formatter.string(from: latestSpeed.downloadBytesPerSecond, unitMode: settings.unitMode)
         let upload = formatter.string(from: latestSpeed.uploadBytesPerSecond, unitMode: settings.unitMode)
-        setStatusTitle(download: download, upload: upload)
+        updateStatusTitle()
         downloadItem.title = "Download: \(download)"
         uploadItem.title = "Upload: \(upload)"
     }
 
-    private func setStatusTitle(download: String, upload: String) {
+    private func updateStatusTitle() {
+        let content = titleFormatter.content(
+            displayMode: settings.displayMode,
+            speed: latestSpeed,
+            unitMode: settings.unitMode,
+            dormTraffic: latestDormTraffic,
+            dormTrafficUnavailable: isDormTrafficUnavailable
+        )
+        setStatusTitle(content)
+    }
+
+    private func setStatusTitle(_ content: StatusTitleContent) {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center
-        paragraphStyle.lineHeightMultiple = 0.82
-        paragraphStyle.maximumLineHeight = 10
-        paragraphStyle.minimumLineHeight = 10
+        if content.isMultiline {
+            paragraphStyle.lineHeightMultiple = 0.82
+            paragraphStyle.maximumLineHeight = 10
+            paragraphStyle.minimumLineHeight = 10
+        }
 
         statusItem.button?.attributedTitle = NSAttributedString(
-            string: "↓ \(download)\n↑ \(upload)",
+            string: content.text,
             attributes: [
-                .font: statusFont,
+                .font: content.isMultiline ? statusFont : singleLineStatusFont,
                 .foregroundColor: NSColor.labelColor,
                 .paragraphStyle: paragraphStyle,
-                .baselineOffset: -1
+                .baselineOffset: content.isMultiline ? -1 : 0
             ]
         )
     }
@@ -91,48 +108,31 @@ final class StatusBarController: NSObject {
 
         dormTrafficStatusItem.isEnabled = false
         dormTrafficTotalItem.isEnabled = false
-        dormTrafficDownloadItem.isEnabled = false
-        dormTrafficUploadItem.isEnabled = false
         dormTrafficUpdatedItem.isEnabled = false
         dormTrafficRefreshItem.target = self
         dormTrafficRefreshItem.isEnabled = !isDormTrafficRefreshInProgress
+        dormTrafficOpenPageItem.target = self
         menu.addItem(dormTrafficStatusItem)
         menu.addItem(dormTrafficTotalItem)
-        menu.addItem(dormTrafficDownloadItem)
-        menu.addItem(dormTrafficUploadItem)
         menu.addItem(dormTrafficUpdatedItem)
         menu.addItem(dormTrafficRefreshItem)
+        menu.addItem(dormTrafficOpenPageItem)
         menu.addItem(.separator())
 
-        let intervalMenu = NSMenu()
-        for interval in RefreshInterval.allCases {
-            let item = NSMenuItem(title: interval.menuTitle, action: #selector(selectRefreshInterval(_:)), keyEquivalent: "")
+        let displayModeMenu = NSMenu()
+        for displayMode in DisplayMode.allCases {
+            let item = NSMenuItem(title: displayMode.menuTitle, action: #selector(selectDisplayMode(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = interval.rawValue
-            item.state = settings.refreshInterval == interval ? .on : .off
-            intervalMenu.addItem(item)
+            item.representedObject = displayMode.rawValue
+            item.state = settings.displayMode == displayMode ? .on : .off
+            displayModeMenu.addItem(item)
         }
-        let intervalItem = NSMenuItem(title: "Refresh Interval", action: nil, keyEquivalent: "")
-        intervalItem.submenu = intervalMenu
-        menu.addItem(intervalItem)
-
-        let unitMenu = NSMenu()
-        for mode in SpeedUnitMode.allCases {
-            let item = NSMenuItem(title: mode.menuTitle, action: #selector(selectUnitMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = settings.unitMode == mode ? .on : .off
-            unitMenu.addItem(item)
-        }
-        let unitItem = NSMenuItem(title: "Units", action: nil, keyEquivalent: "")
-        unitItem.submenu = unitMenu
-        menu.addItem(unitItem)
+        let displayModeItem = NSMenuItem(title: "Display Mode", action: nil, keyEquivalent: "")
+        displayModeItem.submenu = displayModeMenu
+        menu.addItem(displayModeItem)
 
         menu.addItem(.separator())
-        launchAtLoginItem.target = self
-        launchAtLoginItem.state = settings.launchAtLogin ? .on : .off
-        launchAtLoginItem.isEnabled = LoginItemController.isSupported
-        menu.addItem(launchAtLoginItem)
+        menu.addItem(settingsMenuItem())
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit IShowSpeed", action: #selector(quit), keyEquivalent: "q")
@@ -144,21 +144,67 @@ final class StatusBarController: NSObject {
         updateDormTrafficItems()
     }
 
+    private func settingsMenuItem() -> NSMenuItem {
+        let settingsMenu = NSMenu()
+
+        let dormAutoRefreshMenu = NSMenu()
+        for interval in DormAutoRefreshInterval.allCases {
+            let item = NSMenuItem(title: interval.menuTitle, action: #selector(selectDormAutoRefreshInterval(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = interval.rawValue
+            item.state = settings.dormAutoRefreshInterval == interval ? .on : .off
+            dormAutoRefreshMenu.addItem(item)
+        }
+        let dormAutoRefreshItem = NSMenuItem(title: "Dorm Auto Refresh", action: nil, keyEquivalent: "")
+        dormAutoRefreshItem.submenu = dormAutoRefreshMenu
+        settingsMenu.addItem(dormAutoRefreshItem)
+
+        let intervalMenu = NSMenu()
+        for interval in RefreshInterval.allCases {
+            let item = NSMenuItem(title: interval.menuTitle, action: #selector(selectRefreshInterval(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = interval.rawValue
+            item.state = settings.refreshInterval == interval ? .on : .off
+            intervalMenu.addItem(item)
+        }
+        let intervalItem = NSMenuItem(title: "Refresh Interval", action: nil, keyEquivalent: "")
+        intervalItem.submenu = intervalMenu
+        settingsMenu.addItem(intervalItem)
+
+        let unitMenu = NSMenu()
+        for mode in SpeedUnitMode.allCases {
+            let item = NSMenuItem(title: mode.menuTitle, action: #selector(selectUnitMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = settings.unitMode == mode ? .on : .off
+            unitMenu.addItem(item)
+        }
+        let unitItem = NSMenuItem(title: "Units", action: nil, keyEquivalent: "")
+        unitItem.submenu = unitMenu
+        settingsMenu.addItem(unitItem)
+
+        settingsMenu.addItem(.separator())
+        launchAtLoginItem.target = self
+        launchAtLoginItem.state = settings.launchAtLogin ? .on : .off
+        launchAtLoginItem.isEnabled = LoginItemController.isSupported
+        settingsMenu.addItem(launchAtLoginItem)
+
+        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        settingsItem.submenu = settingsMenu
+        return settingsItem
+    }
+
     private func updateDormTrafficItems(status: String? = nil) {
         dormTrafficStatusItem.title = status ?? "Dorm Traffic: ready"
         dormTrafficRefreshItem.isEnabled = !isDormTrafficRefreshInProgress
 
         guard let latestDormTraffic else {
             dormTrafficTotalItem.title = "Today Total: --"
-            dormTrafficDownloadItem.title = "Today Download: --"
-            dormTrafficUploadItem.title = "Today Upload: --"
             dormTrafficUpdatedItem.title = "Updated: --"
             return
         }
 
         dormTrafficTotalItem.title = "Today Total: \(latestDormTraffic.total)"
-        dormTrafficDownloadItem.title = "Today Download: \(latestDormTraffic.download)"
-        dormTrafficUploadItem.title = "Today Upload: \(latestDormTraffic.upload)"
         dormTrafficUpdatedItem.title = "Updated: \(dormTrafficDateFormatter.string(from: latestDormTraffic.fetchedAt))"
     }
 
@@ -178,13 +224,34 @@ final class StatusBarController: NSObject {
             do {
                 let usage = try await dormTrafficService.usage(forceRefresh: forceRefresh)
                 latestDormTraffic = usage
+                isDormTrafficUnavailable = false
                 isDormTrafficRefreshInProgress = false
                 updateDormTrafficItems()
+                updateStatusTitle()
             } catch {
+                isDormTrafficUnavailable = latestDormTraffic == nil
                 isDormTrafficRefreshInProgress = false
                 updateDormTrafficItems(status: "Dorm Traffic: unavailable")
+                updateStatusTitle()
             }
         }
+    }
+
+    private func configureDormAutoRefreshTimer() {
+        dormAutoRefreshTimer?.invalidate()
+        dormAutoRefreshTimer = nil
+
+        let interval = settings.dormAutoRefreshInterval
+        guard interval != .off else {
+            return
+        }
+
+        dormAutoRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval.rawValue, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshDormTraffic(forceRefresh: true)
+            }
+        }
+        dormAutoRefreshTimer?.tolerance = min(interval.rawValue * 0.1, 30)
     }
 
     @objc private func selectRefreshInterval(_ sender: NSMenuItem) {
@@ -195,7 +262,7 @@ final class StatusBarController: NSObject {
 
         settings.refreshInterval = interval
         monitor.updateInterval(interval.rawValue)
-        rebuildMenu()
+        updateMenuItemStates(in: sender.menu)
     }
 
     @objc private func selectUnitMode(_ sender: NSMenuItem) {
@@ -205,11 +272,67 @@ final class StatusBarController: NSObject {
         }
 
         settings.unitMode = mode
-        rebuildMenu()
+        updateMenuItemStates(in: sender.menu)
+        updateStatusTitle()
+    }
+
+    @objc private func selectDisplayMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let displayMode = DisplayMode(rawValue: rawValue) else {
+            return
+        }
+
+        settings.displayMode = displayMode
+        updateMenuItemStates(in: sender.menu)
+        updateStatusTitle()
+
+        if displayMode == .dormDailyUsage {
+            refreshDormTraffic(forceRefresh: false)
+        }
+    }
+
+    @objc private func selectDormAutoRefreshInterval(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? Double,
+              let interval = DormAutoRefreshInterval(rawValue: rawValue) else {
+            return
+        }
+
+        settings.dormAutoRefreshInterval = interval
+        configureDormAutoRefreshTimer()
+        updateMenuItemStates(in: sender.menu)
+    }
+
+    private func updateMenuItemStates(in menu: NSMenu?) {
+        guard let menu else {
+            return
+        }
+
+        for item in menu.items {
+            if let rawValue = item.representedObject as? Double,
+               let interval = RefreshInterval(rawValue: rawValue) {
+                item.state = settings.refreshInterval == interval ? .on : .off
+            } else if let rawValue = item.representedObject as? Double,
+                      let interval = DormAutoRefreshInterval(rawValue: rawValue) {
+                item.state = settings.dormAutoRefreshInterval == interval ? .on : .off
+            } else if let rawValue = item.representedObject as? String,
+                      let mode = SpeedUnitMode(rawValue: rawValue) {
+                item.state = settings.unitMode == mode ? .on : .off
+            } else if let rawValue = item.representedObject as? String,
+                      let displayMode = DisplayMode(rawValue: rawValue) {
+                item.state = settings.displayMode == displayMode ? .on : .off
+            }
+        }
     }
 
     @objc private func refreshDormTrafficManually() {
         refreshDormTraffic(forceRefresh: true)
+    }
+
+    @objc private func openDormTrafficPage() {
+        guard let url = URL(string: "https://dorm-long-1.cc.ntu.edu.tw/login_online_detail.php") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -235,6 +358,7 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func quit() {
+        dormAutoRefreshTimer?.invalidate()
         monitor.stop()
         NSApplication.shared.terminate(nil)
     }

@@ -11,6 +11,8 @@ struct AppSettingsTests {
         #expect(settings.refreshInterval == .oneSecond)
         #expect(settings.unitMode == .auto)
         #expect(settings.launchAtLogin == false)
+        #expect(settings.displayMode == .realtimeSpeed)
+        #expect(settings.dormAutoRefreshInterval == .off)
     }
 
     @Test func persistsValues() {
@@ -20,11 +22,15 @@ struct AppSettingsTests {
         settings.refreshInterval = .halfSecond
         settings.unitMode = .megabytes
         settings.launchAtLogin = true
+        settings.displayMode = .dormDailyUsage
+        settings.dormAutoRefreshInterval = .tenMinutes
 
         let reloaded = AppSettings(defaults: defaults)
         #expect(reloaded.refreshInterval == .halfSecond)
         #expect(reloaded.unitMode == .megabytes)
         #expect(reloaded.launchAtLogin == true)
+        #expect(reloaded.displayMode == .dormDailyUsage)
+        #expect(reloaded.dormAutoRefreshInterval == .tenMinutes)
     }
 
     private func makeDefaults() -> UserDefaults {
