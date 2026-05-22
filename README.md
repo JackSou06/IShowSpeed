@@ -17,7 +17,7 @@ IShowSpeed is a native macOS menu bar app that shows live network download and u
 
 Click the menu bar item to load today's dorm network usage:
 
-- Today Total
+- Dorm usage total
 - Updated time
 - Open the dorm traffic page in your browser
 
@@ -26,6 +26,8 @@ The app does not poll the dorm traffic page in the background. It fetches on men
 Use `Display Mode` in the menu to switch the status bar itself between realtime speed and dorm daily usage. Dorm daily usage mode shows only the total usage value, for example `6.66GB`.
 
 Use `Settings` to configure dorm auto refresh, speed refresh interval, units, and launch at login. Dorm auto refresh can optionally refresh dorm traffic in the background every 5 or 10 minutes. The default is `Off`.
+
+The menu uses native macOS symbols and keeps the status bar compact: realtime mode shows two speed lines, while dorm usage mode shows only the total usage value.
 
 ## Development
 

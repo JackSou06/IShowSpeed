@@ -3,6 +3,12 @@ import Foundation
 struct StatusTitleContent: Equatable, Sendable {
     let text: String
     let isMultiline: Bool
+    let lines: [StatusTitleLine]
+}
+
+struct StatusTitleLine: Equatable, Sendable {
+    let text: String
+    let symbolName: String?
 }
 
 struct StatusTitleFormatter: Sendable {
@@ -23,13 +29,29 @@ struct StatusTitleFormatter: Sendable {
         case .realtimeSpeed:
             let download = speedFormatter.string(from: speed.downloadBytesPerSecond, unitMode: unitMode)
             let upload = speedFormatter.string(from: speed.uploadBytesPerSecond, unitMode: unitMode)
-            return StatusTitleContent(text: "↓ \(download)\n↑ \(upload)", isMultiline: true)
+            return StatusTitleContent(
+                text: "\(download)\n\(upload)",
+                isMultiline: true,
+                lines: [
+                    StatusTitleLine(text: download, symbolName: "arrow.down.circle"),
+                    StatusTitleLine(text: upload, symbolName: "arrow.up.circle")
+                ]
+            )
 
         case .dormDailyUsage:
             if let dormTraffic {
-                return StatusTitleContent(text: dormTraffic.total, isMultiline: false)
+                return StatusTitleContent(
+                    text: dormTraffic.total,
+                    isMultiline: false,
+                    lines: [StatusTitleLine(text: dormTraffic.total, symbolName: nil)]
+                )
             }
-            return StatusTitleContent(text: dormTrafficUnavailable ? "N/A" : "--", isMultiline: false)
+            let text = dormTrafficUnavailable ? "N/A" : "--"
+            return StatusTitleContent(
+                text: text,
+                isMultiline: false,
+                lines: [StatusTitleLine(text: text, symbolName: nil)]
+            )
         }
     }
 }

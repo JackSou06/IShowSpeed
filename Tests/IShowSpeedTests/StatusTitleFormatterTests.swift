@@ -15,7 +15,14 @@ struct StatusTitleFormatterTests {
             dormTrafficUnavailable: false
         )
 
-        #expect(content == StatusTitleContent(text: "↓ 1.5 KB/s\n↑ 2.0 KB/s", isMultiline: true))
+        #expect(content == StatusTitleContent(
+            text: "1.5 KB/s\n2.0 KB/s",
+            isMultiline: true,
+            lines: [
+                StatusTitleLine(text: "1.5 KB/s", symbolName: "arrow.down.circle"),
+                StatusTitleLine(text: "2.0 KB/s", symbolName: "arrow.up.circle")
+            ]
+        ))
     }
 
     @Test func formatsDormDailyUsageAsSingleValueOnly() {
@@ -34,7 +41,11 @@ struct StatusTitleFormatterTests {
             dormTrafficUnavailable: false
         )
 
-        #expect(content == StatusTitleContent(text: "6.66GB", isMultiline: false))
+        #expect(content == StatusTitleContent(
+            text: "6.66GB",
+            isMultiline: false,
+            lines: [StatusTitleLine(text: "6.66GB", symbolName: nil)]
+        ))
     }
 
     @Test func formatsDormDailyUsagePlaceholderWhenNotLoaded() {
@@ -46,7 +57,11 @@ struct StatusTitleFormatterTests {
             dormTrafficUnavailable: false
         )
 
-        #expect(content == StatusTitleContent(text: "--", isMultiline: false))
+        #expect(content == StatusTitleContent(
+            text: "--",
+            isMultiline: false,
+            lines: [StatusTitleLine(text: "--", symbolName: nil)]
+        ))
     }
 
     @Test func formatsDormDailyUsageUnavailableWhenNoCacheExists() {
@@ -58,6 +73,10 @@ struct StatusTitleFormatterTests {
             dormTrafficUnavailable: true
         )
 
-        #expect(content == StatusTitleContent(text: "N/A", isMultiline: false))
+        #expect(content == StatusTitleContent(
+            text: "N/A",
+            isMultiline: false,
+            lines: [StatusTitleLine(text: "N/A", symbolName: nil)]
+        ))
     }
 }
